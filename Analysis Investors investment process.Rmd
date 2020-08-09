@@ -1,0 +1,388 @@
+---
+title: "Investor's Investment Process Analysis"
+author: "Roby"
+date: "8/9/2020"
+output: html_document
+---
+
+
+## Project Data Analysis For Finance : Investor's Investment Process
+
+### Background
+
+DQLab Finance is a peer to peer lending company, so DQLab Finance requires investors to provide loans to prospective borrowers.
+
+Every time a borrower applies for a loan, DQLab Finance will upload the loan to the marketplace. Investors who have registered will see the loan, if there is a match, they will order and pay. So that the investor will finance the selected loan.
+
+In this project, an analysis of the investment process of the investor will be carried out.
+
+
+### Tasks and Steps
+
+In this assignment, we will analyze how the behavior is
+
+The steps that will be taken are,
+1. Data exploration
+2. Data manipulation
+3. Analysis of the investment process
+4. Analyze the time until the first investment
+5. Invest retention analysis
+
+
+### Package
+
+In this analysis, several packages will be used that help us perform data analysis,
+
+- `Package dplyr`, is a package that is most often used in data analysis, very helpful in data manipulation, the most commonly used functions are,
+
+    - mutate() : create new variables based on existing variables
+    - select() : choose a variable based on its name
+    - filter() : filter data based on the value of the variable
+    - summarise() : converts multiple values into one summary value
+    - arrange() : sort rows of data
+
+- `Package ggplot2`, is a package used for plotting with a consistent syntax, in general, for plotting by calling functions,
+
+    `ggplot(data) + geom_type(aes(x,y,fill,color))`
+    
+    - geom_type replaced with functions according to the expected plot types, for example geom_line, geom_bar, geom_point, geom_boxplot and others.
+    
+- `Packages scales`, used to format numeric data values into a format that is easy to read, not used very often, but helps when exploring data, commonly used functions are,
+
+    - comma() : changes numeric to thousands of symbols, for example r 10 ^ 10 is changed to r scales :: comma (10 ^ 10)
+    - percent() : converts numeric to a percent format, for example r 0.65877 converts to r scales :: percent (0.65877)
+
+- `Packages tidyr`, used to format data, from wide to long. very useful in the data preparation stage, commonly used functions are,
+
+    - spread() : formats data.frame to be wide, the contents of the key column are changed to the column names, and the contents of the value columns are changed to the contents of each column of the row
+    - gather() : format data.frame to be long, the name of the selected column name is used as the contents of the key column, while previously the contents of the columns become the contents of the value column
+
+- `Packages lubridate`, used to process data types Date and Timestamp, commonly used functions are,
+
+    - ymd() : Change the character type with YearMonthDate format to Date type
+    - ymd_hms() : Change the character type with YearMonthDate HourMinuteSecond format to Timestamp type
+    - floor_date() : rounds the Date / Timestamp down according to the type of time inputted
+
+```{r}
+# Load the package
+
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(tidyr)
+library(lubridate)
+```
+
+## Import Data, Exploration and Manipulation
+
+```{r}
+df_event <- read.csv('https://dqlab-dataset.s3-ap-southeast-1.amazonaws.com/event.csv', stringsAsFactors = F)
+
+glimpse(df_event)
+```
+It can be seen that there are 33,571 rows of data (Observations) and 4 columns (Variables), namely:
+
+     - loan_id: unique ID of loan uploaded to marketplace
+     - investor_id: unique ID of registered investor
+     - nama_event: activities carried out by investors and changes in loan status
+     - created_at: time (up to seconds) the event occurred
+
+### Change the `created_at` column of type` Character` to type `Timestamp`
+
+```{r}
+df_event$created_at <- ymd_hms(df_event$created_at)
+```
+
+### Summary Event
+
+```{r}
+df_event %>% 
+  group_by(nama_event) %>% 
+  summarise(jumlah_event = n(), loan = n_distinct(loan_id),investor = n_distinct(investor_id))
+```
+
+Based on these results, it turned out that there were 5 incidents. With the following explanation:
+
+    - investor_register: Event when Investor registers.
+    The number of events is the same as for unique investors, that is, each investor only conducts this event once. The loan amount is only 1, this is NA, because this register does not require loans.
+
+    - loan_to_marketplace: Event when loans are uploaded to the marketplace,
+    The number of events is the same as the loan amount, that is, each loan is uploaded only once. The number of investors is only 1, this is NA content, because when uploaded to the market it is not related to investors
+
+    - investor_view_loan: Event when investors view loan details on the marketplace.
+    The number of events is not the same as unique loans or unique investors, meaning 1 investor can view the same loan as times, and 1 loan can be seen by several different investors
+
+    - investor_order_loan: An event when an investor orders a loan, waiting for payment.
+    The number of events is not the same as unique loans or unique investors, meaning that 1 loan can be ordered by several different investors (if the previous order is not paid)
+
+    - investor_pay_loan: Event when the investor repays the loan from the previous order.
+    The number of events is the same as a unique loan, meaning that this 1 loan can only be paid by 1 investor. The number of investors with less loan amount means that 1 investor can buy multiple loans
+
+### The event loan is uploaded to the marketplace
+
+For event loans uploaded to the marketplace because there is no investor_id, they can be processed independently. To separate them, simply filter the event name 'loan_to_marketplace', then change the created_at name to marketplace.
+
+```{r}
+df_marketplace <- df_event %>% 
+  filter(nama_event == 'loan_to_marketplace') %>% 
+  select(loan_id, marketplace = created_at)
+
+df_marketplace
+```
+
+### Event investor sees loan details
+
+For event investors, see loan details, because investors can view loan details many times, it will be processed separately to make a summary per loan per investor
+
+```{r}
+df_view_loan <- df_event %>%
+  filter(nama_event == 'investor_view_loan') %>%
+  group_by(loan_id, investor_id) %>%
+  summarise(jumlah_view = n(),
+            pertama_view = min(created_at),
+            terakhir_view = max(created_at))
+
+df_view_loan
+```
+
+### Event investors order and pay loan
+
+Then for investor_order_loan and investor_pay_loan events, because it is unique for the combination of loan_id and investor_id, it can be processed simultaneously, and will be spread using the tidyr package.
+
+```{r}
+df_order_pay <- df_event %>%
+  filter(nama_event %in% c('investor_order_loan','investor_pay_loan')) %>%
+  spread(nama_event, created_at) %>%
+  select(loan_id, investor_id, 
+         order = investor_order_loan,
+         pay = investor_pay_loan)
+
+df_order_pay
+```
+
+### Combined Investment Loan Data
+
+Next, combine the df_marketplace with the previously created df_view_loan and df_order_pay to create a data.frame containing the time for each loan event uploaded to the marketplace, viewed by investors, then ordered and paid for.
+
+```{r}
+df_loan_invest <- df_marketplace %>%
+  left_join(df_view_loan, by = 'loan_id' ) %>%
+  left_join(df_order_pay, by = c('loan_id', 'investor_id'))
+
+df_loan_invest
+```
+
+## Analysis of the investment process
+
+#### See the relationship between the number of views and the order
+
+At this stage, it will be seen whether there is a relationship between the number of times investors view loans and order decisions or not.
+
+```{r}
+df_loan_invest %>%
+  mutate(status_order = ifelse(is.na(order),'not_order','order')) %>%
+  count(jumlah_view, status_order) %>%
+  spread(status_order, n, fill = 0) %>%
+  mutate(persen_order = scales::percent(order/(order+not_order)))
+```
+
+And it turns out that there is no specific pattern that states the relationship between the number of views and the investor's decision to order the loan. It is almost uniform that more than 85% of investors who have seen a loan will order it.
+
+For the number of views 4 or more, because there are very few events it can be ignored.
+
+#### How long will it take the investor to order from the first look at the loan details?
+
+At this stage, you will see the distribution of time from first looking at loan details to deciding to order.
+
+```{r}
+df_loan_invest %>%
+  filter(!is.na(order)) %>% 
+  mutate(lama_order_view = as.numeric(difftime(order, pertama_view, units = "mins"))) %>% 
+  group_by(jumlah_view) %>% 
+  summarise_at(vars(lama_order_view), funs(total = n(), min, median, mean, max)) %>% 
+  mutate_if(is.numeric, funs(round(.,2)))
+```
+
+It turns out that the majority of investors immediately order a loan when opening the details, which is under 5 minutes for investors who only see loan details once and order. For those who open 2-4 times the time ranges from 30 minutes. In the number of views 2 and 3, because there are outliers of old messages that are far from the median, this makes the average value affected to be high, 1 hour more.
+
+#### Average time of ordering since the loan is uploaded every week
+
+At this stage, what is calculated is the length of time the order has taken since the loan was first uploaded.
+
+This data will be made in a weekly plot to see how the trend is.
+
+```{r}
+df_lama_order_per_minggu <- df_loan_invest %>% 
+  filter(!is.na(order)) %>%
+  mutate(tanggal = floor_date(marketplace, 'week'),
+         lama_order = as.numeric(difftime(order, marketplace, units = "hour"))) %>% 
+  group_by(tanggal) %>%
+  summarise(lama_order = median(lama_order)) 
+
+ggplot(df_lama_order_per_minggu) +
+  geom_line(aes(x = tanggal, y = lama_order)) +
+  theme_bw() + 
+  labs(title = "The average length of orders in 2020 is longer than 2019", 
+	   x = "Date", 
+	   y = "time in the marketplace until ordered (hours)")
+```
+
+#### Do Investors Pay Their Orders?
+
+```{r}
+df_bayar_per_minggu <- df_loan_invest %>%
+    filter(!is.na(order)) %>%
+    mutate(tanggal = floor_date(marketplace, 'week')) %>%
+    group_by(tanggal) %>%
+    summarise(persen_bayar = mean(!is.na(pay))) 
+
+ggplot(df_bayar_per_minggu) +
+  geom_line(aes(x = tanggal, y = persen_bayar)) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_bw() + 
+  labs(title="About 95% paid for the order. At the end of May there were outliers due to Eid",
+       x="Date", 
+       y="Orders that are paid for")
+```
+
+#### Time it takes for Investors to Pay Orders
+
+```{r}
+df_lama_bayar_per_minggu <- df_loan_invest %>%
+    filter(!is.na(pay)) %>%
+    mutate(tanggal = floor_date(order, 'week'),
+           lama_bayar = as.numeric(difftime(pay, order, units = "hour"))) %>%
+    group_by(tanggal) %>%
+    summarise(lama_bayar = median(lama_bayar)) 
+
+ggplot(df_lama_bayar_per_minggu) +
+    geom_line(aes(x =tanggal, y = lama_bayar)) +
+    theme_bw() + 
+    labs(title="Payment times are trending to worsen, 2x longer than before", 
+         x="Date", 
+         y="time in the marketplace until ordered (hours)")
+```
+
+#### The conclusion is
+
+The trend in 2020 tends to be worse than in 2019, this may be due to the pandemic, investors are taking longer to consider where to invest, and whether orders that have been made are willing to be paid or not.
+
+
+### Analysis Summary Investor
+
+#### Trend Investor Register
+
+Here will be made how the trend of the number of registered investors.
+
+```{r}
+df_investor_register <- df_event %>% 
+    filter(nama_event == 'investor_register') %>%
+    mutate(tanggal = floor_date(created_at, 'week')) %>%
+    group_by(tanggal) %>%
+    summarise(investor = n_distinct(investor_id)) 
+
+ggplot(df_investor_register) +
+    geom_line(aes(x = tanggal, y = investor)) +
+    theme_bw() + 
+    labs(title="Registered investors had risen in early 2020 but have fallen again",
+    x="Date", 
+    y="Investor Register")
+```
+
+#### Investor's First Investment Trend
+
+After registering, the next goal for the investor is so that he can invest. This is commonly called a conversion, which is when the user converts to the user we expect, or moves up to a better funnel.
+
+To find out when investors convert, it is necessary to find out when investors first invested and create a trend.
+
+```{r}
+df_investor_pertama_invest <- df_event %>% 
+    filter(nama_event == 'investor_pay_loan') %>%
+    group_by(investor_id) %>%
+    summarise(pertama_invest = min(created_at)) %>%
+    mutate(tanggal = floor_date(pertama_invest, 'week')) %>%
+    group_by(tanggal) %>%
+    summarise(investor = n_distinct(investor_id))
+
+ggplot(df_investor_pertama_invest) +
+  geom_line(aes(x = tanggal, y = investor)) +
+  theme_bw() + 
+  theme(plot.title = element_text(size = 9)) +
+  labs(title = "There is an increasing trend in the number of invest investors, but it has dropped dramatically starting March 2020", x = "Date", y = "First Investor's Investment")
+```
+
+#### First Cohort Invest by Month Register
+
+Previously, we calculated how the trend of new investors to invest every week. Next will be seen the conversion invest based on the month of registration.
+
+```{r}
+df_register_per_investor <- df_event %>%
+    filter(nama_event == 'investor_register') %>%
+    rename(tanggal_register = created_at) %>%
+    mutate(bulan_register = floor_date(tanggal_register, 'month')) %>%
+    select(investor_id, tanggal_register, bulan_register)
+df_pertama_invest_per_investor <- df_event %>%
+    filter(nama_event == 'investor_pay_loan') %>%
+    group_by(investor_id) %>%
+    summarise(pertama_invest = min(created_at))
+
+df_register_per_investor %>%
+    left_join(df_pertama_invest_per_investor, by = 'investor_id') %>%
+    mutate(lama_invest = as.numeric(difftime(pertama_invest, tanggal_register, units = "day")) %/% 30) %>%
+    group_by(bulan_register, lama_invest) %>%
+    summarise(investor_per_bulan = n_distinct(investor_id)) %>%
+    group_by(bulan_register) %>%
+    mutate(register = sum(investor_per_bulan)) %>%
+    filter(!is.na(lama_invest)) %>%
+    mutate(invest = sum(investor_per_bulan)) %>%
+    mutate(persen_invest = scales::percent(invest/register)) %>%
+    mutate(breakdown_persen_invest = scales::percent(investor_per_bulan/invest)) %>%
+    select(-investor_per_bulan) %>%
+    spread(lama_invest, breakdown_persen_invest)
+```
+
+#### Cohort Retention Invest
+
+Will investors return to investing in the following months after the first investment?
+
+```{r}
+df_investasi_per_investor <- df_event %>%
+    filter(nama_event == 'investor_pay_loan') %>%
+    rename(tanggal_invest = created_at) %>% 
+    select(investor_id, tanggal_invest)
+
+
+df_pertama_invest_per_investor %>% 
+    mutate(bulan_pertama_invest = floor_date(pertama_invest, 'month')) %>% 
+    inner_join(df_investasi_per_investor, by = 'investor_id') %>%
+    mutate(jarak_invest = as.numeric(difftime(tanggal_invest, pertama_invest, units = "day")) %/% 30) %>% 
+    group_by(bulan_pertama_invest, jarak_invest) %>%
+    summarise(investor_per_bulan = n_distinct(investor_id)) %>%
+    group_by(bulan_pertama_invest) %>%
+    mutate(investor = max(investor_per_bulan )) %>%
+    mutate(breakdown_persen_invest = scales::percent(investor_per_bulan/investor)) %>%
+    select(-investor_per_bulan) %>%
+    spread(jarak_invest, breakdown_persen_invest) %>%
+    select(-`0`)
+```
+
+## Conclusion
+
+Based on all the analyzes that have been carried out, it can be concluded that:
+
+  - In general, DQLab Finance is actually in a positive growth, fluctuating up and down due to differences in behavior on certain dates, which are influenced by other things, such as payroll.
+  - In March, April to mid-May there was a lot of decline in the analyzed metrics, this may be due to the Covid19 pandemic, it is necessary to further analyze whether that is the case.
+  - In general, 5% of the total investors who register every month, will invest, and the majority is done in the first 30 days after registering, and a small part in the second month. In the following months there is very little chance of being able to convert. So it is necessary to ascertain how the journey of the investor is smooth in the first month, so that they want to convert their investment in DQLab Finance.
+  - It also needs to be seen after the first investment, invest again in the following months. In general, 30% of investors will invest again in the following month.
+  - In February, the conversion rate was good, the highest was 7.57%, in terms of the highest number, but when you saw the retention, only 16% was invested in the following month, only half of it from the category of other months.
+  - Need to further analyze where and the profile of investors from February to April 2020.
+
+
+
+
+
+
+
+
+
+
